@@ -18,4 +18,4 @@ Benötigte Dateien:
  - Starte das Script mit python3 main.py
  - Du erhältst die angepasste CSV-Datei im gleichen Ordner.
 
-Solltest du Hilfe brauchen, öffne gern ein Ticket per E-Mail an help@everhype.systems
+Solltest du Hilfe brauchen, öffne gern ein Ticket per E-Mail an support@everhype.de
