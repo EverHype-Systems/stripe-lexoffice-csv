@@ -89,9 +89,12 @@ if __name__ == '__main__':
         amount = line[3]
 
         customer = getCustomerByPayment(source)
-        accounting_date = line[8]
-        value_date = line[9]
-        description = line[10]
+        # --> created (utc)
+        accounting_date = line[9]
+        # --> available_on (utc)
+        value_date = line[10]
+        # --> description
+        description = line[11]
 
         everhypeCSV.append([
             id,
