@@ -53,7 +53,7 @@ def read_csv():
     :return: CSV Lines in array from import.csv
     """
     csvlines = []
-    with open('import.csv', newline='') as csvfile:
+    with open('import.csv', newline='', encoding="utf-8") as csvfile:
         reader = csv.reader(csvfile)
 
         # Appending rows to csvlines
