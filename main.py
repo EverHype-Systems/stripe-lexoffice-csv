@@ -122,7 +122,7 @@ if __name__ == '__main__':
 
     # writing to export.csv
     with open('export.csv', 'w', newline='', encoding='utf-8') as exportFile:
-        writer = csv.writer(exportFile)
+        writer = csv.writer(exportFile, delimiter=';')
 
         writer.writerow(csv_header())
         writer.writerows(everhypeCSV)
