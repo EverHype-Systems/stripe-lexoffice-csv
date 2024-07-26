@@ -8,7 +8,7 @@ Benötigte Packages:
 Benötigte Dateien:
 
  - import.csv im gleichen Ordner, wie main.py 
-	 - Du Kannst diesen Export unter *Zahlungen > [Alle Transaktionen](https://dashboard.stripe.com/balance) > Export* herunterladen
+	 - Du Kannst diesen Export folgendermaßen herunterladen: *[Salden](https://dashboard.stripe.com/balance/overview) > [Alle Aktivitäten](https://dashboard.stripe.com/balance) > [Exportieren klicken]() > Spalten auf [Spalten (17)]() stellen > Export runterladen
 
 ## Einrichtung
 
