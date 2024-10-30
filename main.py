@@ -4,7 +4,8 @@ from stripe.error import InvalidRequestError
 
 
 # Define your stripe key here
-STRIPE_KEY = ''
+with open('stripe.key', 'r') as key_file:
+    STRIPE_KEY = key_file.read().strip()
 STRIPE_NAME = 'Stripe Technology Europe, Limited'
 
 
@@ -23,14 +24,10 @@ def csv_header():
     :return: array
     """
     return [
-        'id',
-        'type',
-        'source',
-        'amount',
-        'customer',
-        'accounting_date',
-        'value_date',
-        'description',
+        'Buchungsdatum',
+        'Auftraggeber/Empfänger',
+        'Verwendungszweck',
+        'Betrag'
     ]
 
 
@@ -96,33 +93,28 @@ if __name__ == '__main__':
         # --> description
         description = line[11]
 
+        if description == '' and toMoney(amount) > 0:
+            description = 'Erlöse'
+
         everhypeCSV.append([
-            id,
-            transType,
-            source,
-            toMoney(amount),
-            customer,
             accounting_date,
-            value_date,
-            description
+            customer,
+            description,
+            toMoney(amount)
         ])
 
         # If there are fees, we are generating a new line
         if line[4] != '0,00':
             everhypeCSV.append([
-                id + '_fee',
-                'Kontoführungsgebühr',
-                source + '_fee',
-                toMoney(line[4]) * -1,
-                STRIPE_NAME,
                 accounting_date,
-                value_date,
-                f'Gebühren für Zahlung {id} -- {description}'
+                STRIPE_NAME,
+                f'Gebühren für Zahlung {id} -- {description}',
+                toMoney(line[4]) * -1
             ])
 
     # writing to export.csv
     with open('export.csv', 'w', newline='', encoding='utf-8') as exportFile:
-        writer = csv.writer(exportFile, delimiter=';')
+        writer = csv.writer(exportFile, delimiter=',')
 
         writer.writerow(csv_header())
         writer.writerows(everhypeCSV)

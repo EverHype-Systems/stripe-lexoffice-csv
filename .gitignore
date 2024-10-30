@@ -1,3 +1,12 @@
+import.csv
+export.csv
+stripe.key
+
+pyvenv.cfg
+bin/
+include/
+lib/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
