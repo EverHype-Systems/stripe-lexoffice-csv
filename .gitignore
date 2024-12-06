@@ -2,6 +2,8 @@ import.csv
 export.csv
 stripe.key
 
+.DS_Store
+
 pyvenv.cfg
 bin/
 include/

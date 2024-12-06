@@ -1,6 +1,8 @@
 import csv
 import stripe
 from stripe.error import InvalidRequestError
+from collections import defaultdict
+from datetime import datetime
 
 
 # Define your stripe key here
@@ -74,16 +76,25 @@ def toMoney(am: str):
     )
 
 
+def get_month(date_str):
+    """
+    Extrahiert den Monat aus einem Datumsstring.
+    """
+    return datetime.strptime(date_str, '%Y-%m-%d %H:%M').strftime('%Y-%m')
+
+
 # Run the script
 if __name__ == '__main__':
     stripeCSV = read_csv()
     everhypeCSV = []
+    monatliche_gebuehren = defaultdict(float)
 
     for line in stripeCSV:
         id = line[0]
         transType = line[1]
         source = line[2]
         amount = line[3]
+        fee = line[4]
 
         customer = getCustomerByPayment(source)
         # --> created (utc)
@@ -96,21 +107,34 @@ if __name__ == '__main__':
         if description == '' and toMoney(amount) > 0:
             description = 'Erlöse'
 
-        everhypeCSV.append([
-            accounting_date,
-            customer,
-            description,
-            toMoney(amount)
-        ])
-
-        # If there are fees, we are generating a new line
-        if line[4] != '0,00':
+        # Sammle Gebühren für monatliche Zusammenfassung
+        if fee != '0,00' or 'Automatic Taxes' in description or 'Post Payment Invoices' in description:
+            monat = get_month(accounting_date)
+            if fee != '0,00':
+                gebuehr = toMoney(fee) * -1
+            else:
+                gebuehr = toMoney(amount)
+            monatliche_gebuehren[monat] += gebuehr
+        
+        if description == 'Erlöse' or description == 'STRIPE PAYOUT':
             everhypeCSV.append([
                 accounting_date,
-                STRIPE_NAME,
-                f'Gebühren für Zahlung {id} -- {description}',
-                toMoney(line[4]) * -1
+                customer,
+                description,
+                toMoney(amount)
             ])
+
+
+    # Füge die zusammengefassten Gebühren pro Monat hinzu
+    for monat, summe in monatliche_gebuehren.items():
+        buchungsdatum = f'{monat}-01'
+        verwendungszweck = f'Stripe Gebühren für {datetime.strptime(monat, "%Y-%m").strftime("%B %Y")}'
+        everhypeCSV.append([
+            buchungsdatum,
+            STRIPE_NAME,
+            verwendungszweck,
+            round(summe, 3)
+        ])
 
     # writing to export.csv
     with open('export.csv', 'w', newline='', encoding='utf-8') as exportFile:
