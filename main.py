@@ -90,22 +90,45 @@ if __name__ == '__main__':
     monatliche_gebuehren = defaultdict(float)
 
     for line in stripeCSV:
-        id = line[0]
-        transType = line[1]
-        source = line[2]
-        amount = line[3]
-        fee = line[4]
+        try:
+            id = line[0]
+            transType = line[1]
+            source = line[2]
+            amount = line[3]
+            fee = line[4]
 
-        customer = getCustomerByPayment(source)
-        # --> created (utc)
-        accounting_date = line[9]
-        # --> available_on (utc)
-        value_date = line[10]
-        # --> description
-        description = line[11]
+            customer = getCustomerByPayment(source)
+            # --> created (utc)
+            accounting_date = line[9]
+            # --> available_on (utc)
+            value_date = line[10]
+            # --> description
+            description = line[11]
 
-        if description == '' and toMoney(amount) > 0:
-            description = 'Erlöse'
+            if description == '' and toMoney(amount) > 0:
+                description = 'Erlöse'
+        except IndexError:
+            print("Fehler: Die CSV-Datei hat nicht das erwartete Format.")
+            print("Bitte stellen Sie sicher, dass die Datei alle erforderlichen Spalten enthält:")
+            print("1. id")
+            print("2. Type")
+            print("3. Source")
+            print("4. Amount")
+            print("5. Fee")
+            print("6. Destination Platform Fee")
+            print("7. Destination Platform Fee Currency")
+            print("8. Net")
+            print("9. Currency")
+            print("10. Created (UTC)")
+            print("11. Available On (UTC)")
+            print("12. Description")
+            print("13. Customer Facing Amount")
+            print("14. Customer Facing Currency")
+            print("15. Transfer")
+            print("16. Transfer Date (UTC)")
+            print("17. Transfer Group")
+            print("\nDie aktuelle Zeile enthält nur", len(line), "Spalten.")
+            exit(1)
 
         # Sammle Gebühren für monatliche Zusammenfassung
         if fee != '0,00' or 'Automatic Taxes' in description or 'Post Payment Invoices' in description:
@@ -142,3 +165,18 @@ if __name__ == '__main__':
 
         writer.writerow(csv_header())
         writer.writerows(everhypeCSV)
+
+    # Erfolgsmeldung ausgeben
+    print("\n✅ Export erfolgreich abgeschlossen!")
+    print(f"📊 Exportierte Datensätze: {len(everhypeCSV)}")
+    print(f"📁 Datei wurde gespeichert als: export.csv")
+    
+    # Statistiken über die exportierten Daten
+    erloese = sum(1 for row in everhypeCSV if row[2] == 'Erlöse')
+    auszahlungen = sum(1 for row in everhypeCSV if row[2] == 'STRIPE PAYOUT')
+    gebuehren = sum(1 for row in everhypeCSV if 'Gebühren' in row[2])
+    
+    print("\n📈 Statistiken:")
+    print(f"- Erlöse: {erloese}")
+    print(f"- Auszahlungen: {auszahlungen}")
+    print(f"- Gebührenbuchungen: {gebuehren}")
