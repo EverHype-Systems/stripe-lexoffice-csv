@@ -129,3 +129,5 @@ dmypy.json
 .pyre/
 import.csv
 export.csv
+export*.csv
+.DS_STORE

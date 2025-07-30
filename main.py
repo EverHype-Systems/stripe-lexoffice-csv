@@ -461,6 +461,23 @@ def createDefaultDescription(source_id: str, transaction_type: str, amount: floa
             return f"Zahlung über {amount:.2f}€, Kunde: {customer_name}"
 
 
+def generate_export_filename(start_date, end_date):
+    """
+    Generate export filename based on date range
+    :param start_date: Start date (datetime object or None)
+    :param end_date: End date (datetime object or None)
+    :return: Filename string
+    """
+    if start_date and end_date:
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+        return f'export_{start_str}_{end_str}.csv'
+    else:
+        # Fallback for CSV method or when dates are not specified
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        return f'export_{timestamp}.csv'
+
+
 def main():
     """
     Main function with CLI argument parsing
@@ -486,9 +503,13 @@ def main():
         print("Usage: python main.py --start-date 2024-01-01 --end-date 2024-01-31")
         return
     
+    # Generate export filename
+    export_filename = generate_export_filename(start_date, end_date)
+    
     print(f"Configuration:")
     print(f"  STRIPE_METHOD: {STRIPE_METHOD}")
     print(f"  SUM_FEES: {SUM_FEES}")
+    print(f"  Export filename: {export_filename}")
     if start_date and end_date:
         print(f"  Time range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
     
@@ -576,14 +597,14 @@ def main():
             f'Aggregated fees -- {"; ".join(fee_descriptions)}'
         ])
 
-    # Writing to export.csv
-    with open('export.csv', 'w', newline='', encoding='utf-8') as exportFile:
+    # Writing to export file
+    with open(export_filename, 'w', newline='', encoding='utf-8') as exportFile:
         writer = csv.writer(exportFile, delimiter=';')
 
         writer.writerow(csv_header())
         writer.writerows(everhypeCSV)
     
-    print(f"Export completed! {len(everhypeCSV)} lines written to export.csv.")
+    print(f"Export completed! {len(everhypeCSV)} lines written to {export_filename}.")
 
 
 # Run the script
