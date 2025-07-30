@@ -29,17 +29,17 @@ def get_client():
 def csv_header():
     """
     This method only returns the csv header for our export
+    Uses LexOffice-compatible German column headers for automatic field mapping
     :return: array
     """
     return [
-        'id',
-        'type',
-        'source',
-        'amount',
-        'customer',
-        'accounting_date',
-        'value_date',
-        'description',
+        'Buchungsdatum',  # Booking Date (accounting_date)
+        'Auftraggeber / Empfänger',  # Client/Payer / Recipient (customer)
+        'Verwendungszweck', # Purpose of Use/Description (description)
+        'Betrag',         # Amount (amount)
+        'Soll Betrag (Ausgabe)', # Debit Amount/Expense (negative amounts)
+        'Haben Betrag (Einnahme)', # Credit Amount/Income (positive amounts)
+        'Wertstellungsdatum', # Value Date (value_date)
     ]
 
 
@@ -681,15 +681,24 @@ def main():
             if not description or description.strip() == '':
                 description = createDefaultDescription(source, transType, toMoney(amount), customer, accounting_date, line[11])
 
+        # Determine if this is income (positive) or expense (negative)
+        amount_float = toMoney(amount)
+        soll_betrag = ""  # Debit amount (expense)
+        haben_betrag = ""  # Credit amount (income)
+        
+        if amount_float < 0:
+            soll_betrag = abs(amount_float)  # Expense (negative amount becomes positive in Soll)
+        else:
+            haben_betrag = amount_float  # Income (positive amount stays positive in Haben)
+        
         everhypeCSV.append([
-            id,
-            transType,
-            source,
-            toMoney(amount),
-            customer,
-            accounting_date,
-            value_date,
-            description
+            accounting_date,  # Buchungsdatum
+            customer,         # Auftraggeber / Empfänger
+            description,      # Verwendungszweck
+            amount_float,     # Betrag (original amount)
+            soll_betrag,      # Soll Betrag (Ausgabe)
+            haben_betrag,     # Haben Betrag (Einnahme)
+            value_date,       # Wertstellungsdatum
         ])
 
         # Processing fee handling (from fee column)
@@ -718,53 +727,51 @@ def main():
                     fee_value_date = value_date
             else:
                 # Create individual fee line (original behavior)
+                fee_description = f'Fees for payment {id} -- {description}'
+                
                 everhypeCSV.append([
-                    id + '_fee',
-                    'Kontoführungsgebühr',
-                    source + '_fee',
-                    round(fee_amount * -1, 2),
-                    STRIPE_NAME,
-                    accounting_date,
-                    value_date,
-                    f'Fees for payment {id} -- {description}'
+                    accounting_date,  # Buchungsdatum
+                    STRIPE_NAME,      # Auftraggeber / Empfänger
+                    fee_description,  # Verwendungszweck
+                    round(fee_amount * -1, 2),  # Betrag
+                    abs(fee_amount),  # Soll Betrag (Ausgabe) - fees are always expenses
+                    "",               # Haben Betrag (Einnahme)
+                    value_date,       # Wertstellungsdatum
                 ])
 
     # If SUM_FEES is enabled, add separate summarized lines for each fee type
     if SUM_FEES:
         if charge_fees > 0:
             everhypeCSV.append([
-                'charge_fees_total',
-                'Kontoführungsgebühr',
-                'charge_fees_total',
-                round(charge_fees * -1, 2),
-                STRIPE_NAME,
-                fee_accounting_date,
-                fee_value_date,
-                'Stripe Processing Fees for Charges'
+                fee_accounting_date,  # Buchungsdatum
+                STRIPE_NAME,          # Auftraggeber / Empfänger
+                'Stripe Processing Fees for Charges',  # Verwendungszweck
+                round(charge_fees * -1, 2),  # Betrag
+                charge_fees,          # Soll Betrag (Ausgabe) - fees are always expenses
+                "",                   # Haben Betrag (Einnahme)
+                fee_value_date,       # Wertstellungsdatum
             ])
         
         if payment_fees > 0:
             everhypeCSV.append([
-                'payment_fees_total',
-                'Kontoführungsgebühr',
-                'payment_fees_total',
-                round(payment_fees * -1, 2),
-                STRIPE_NAME,
-                fee_accounting_date,
-                fee_value_date,
-                'Stripe Processing Fees for Payments'
+                fee_accounting_date,  # Buchungsdatum
+                STRIPE_NAME,          # Auftraggeber / Empfänger
+                'Stripe Processing Fees for Payments',  # Verwendungszweck
+                round(payment_fees * -1, 2),  # Betrag
+                payment_fees,         # Soll Betrag (Ausgabe) - fees are always expenses
+                "",                   # Haben Betrag (Einnahme)
+                fee_value_date,       # Wertstellungsdatum
             ])
         
         if billing_usage_fees > 0:
             everhypeCSV.append([
-                'billing_usage_fees_total',
-                'Kontoführungsgebühr',
-                'billing_usage_fees_total',
-                round(billing_usage_fees * -1, 2),
-                STRIPE_NAME,
-                fee_accounting_date,
-                fee_value_date,
-                'Billing Usage Fee'
+                fee_accounting_date,  # Buchungsdatum
+                STRIPE_NAME,          # Auftraggeber / Empfänger
+                'Billing Usage Fee',  # Verwendungszweck
+                round(billing_usage_fees * -1, 2),  # Betrag
+                billing_usage_fees,   # Soll Betrag (Ausgabe) - fees are always expenses
+                "",                   # Haben Betrag (Einnahme)
+                fee_value_date,       # Wertstellungsdatum
             ])
 
     # Writing to export file
