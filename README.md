@@ -23,7 +23,7 @@ Ein flexibles Python-Tool zur Konvertierung von Stripe-Transaktionsdaten in ein 
 ### 1. Repository klonen
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/EverHype-Systems/stripe-lexoffice-csv.git
 cd stripe-lexoffice-csv
 ```
 
