@@ -45,14 +45,132 @@ def csv_header():
 
 def getCustomerByPayment(payment_id: str):
     """
-    This method tries to fetch the Customer name from the payment
+    This method tries to fetch the Customer name from various Stripe objects
     if it does not succeed, it returns the stripe name (happens e.g. when there is a chargeback from a customer)
     :param payment_id: => source id in import.csv
     :return:
     """
     try:
-        return get_client().Charge.retrieve(payment_id)['billing_details']['name']
+        # Handle None or empty payment_id
+        if not payment_id:
+            return STRIPE_NAME
+            
+        client = get_client()
+        
+        # Handle different types of Stripe objects
+        if payment_id.startswith('ch_'):
+            # It's a charge
+            charge = client.Charge.retrieve(payment_id)
+            # Try billing_details first
+            if charge.get('billing_details', {}).get('name'):
+                return charge['billing_details']['name']
+            # Try customer object if available
+            if charge.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(charge['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            # Try payment intent if available
+            if charge.get('payment_intent'):
+                try:
+                    pi = client.PaymentIntent.retrieve(charge['payment_intent'])
+                    if pi.get('customer'):
+                        customer = client.Customer.retrieve(pi['customer'])
+                        return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            return STRIPE_NAME
+            
+        elif payment_id.startswith('pi_'):
+            # It's a payment intent
+            payment_intent = client.PaymentIntent.retrieve(payment_id)
+            # Try to get customer from the payment intent
+            if payment_intent.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(payment_intent['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            # Try to get the latest charge from this payment intent
+            if payment_intent.get('latest_charge'):
+                try:
+                    charge = client.Charge.retrieve(payment_intent['latest_charge'])
+                    if charge.get('billing_details', {}).get('name'):
+                        return charge['billing_details']['name']
+                except:
+                    pass
+            return STRIPE_NAME
+            
+        elif payment_id.startswith('py_'):
+            # Could be various payment-related objects, try different approaches
+            try:
+                # Try as PaymentMethod first
+                pm = client.PaymentMethod.retrieve(payment_id)
+                if pm.get('customer'):
+                    customer = client.Customer.retrieve(pm['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                return STRIPE_NAME
+            except:
+                # If PaymentMethod doesn't work, try other approaches
+                return STRIPE_NAME
+                
+        elif payment_id.startswith('cs_'):
+            # It's a checkout session
+            session = client.checkout.Session.retrieve(payment_id)
+            if session.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(session['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            # Try to get customer details from the session itself
+            customer_details = session.get('customer_details', {})
+            if customer_details.get('name'):
+                return customer_details['name']
+            if customer_details.get('email'):
+                return customer_details['email']
+            return STRIPE_NAME
+            
+        elif payment_id.startswith('in_'):
+            # It's an invoice
+            invoice = client.Invoice.retrieve(payment_id)
+            if invoice.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(invoice['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            return STRIPE_NAME
+            
+        elif payment_id.startswith('sub_'):
+            # It's a subscription
+            subscription = client.Subscription.retrieve(payment_id)
+            if subscription.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(subscription['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            return STRIPE_NAME
+            
+        else:
+            # For unknown types, try as charge first (legacy behavior)
+            try:
+                charge = client.Charge.retrieve(payment_id)
+                if charge.get('billing_details', {}).get('name'):
+                    return charge['billing_details']['name']
+                if charge.get('customer'):
+                    customer = client.Customer.retrieve(charge['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                return STRIPE_NAME
+            except:
+                return STRIPE_NAME
+                
     except InvalidRequestError:
+        return STRIPE_NAME
+    except Exception as e:
+        print(f"Warning: Could not fetch customer for {payment_id}: {str(e)}")
         return STRIPE_NAME
 
 
