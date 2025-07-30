@@ -517,9 +517,13 @@ def main():
     stripeCSV = get_transactions_data(start_date, end_date)
     everhypeCSV = []
     
-    # Variables for fee aggregation
-    total_fees = 0.0
-    fee_descriptions = []
+    # Variables for fee aggregation - separate by type
+    charge_fees = 0.0
+    payment_fees = 0.0
+    billing_usage_fees = 0.0
+    charge_fee_descriptions = []
+    payment_fee_descriptions = []
+    billing_fee_descriptions = []
     fee_accounting_date = None
     fee_value_date = None
 
@@ -536,6 +540,16 @@ def main():
         value_date = line[10]
         # --> description from original source or balance transaction
         description = line[11]
+        
+        # Handle billing usage fees (stripe_fee) when SUM_FEES is enabled
+        if transType == 'stripe_fee' and SUM_FEES:
+            billing_usage_fees += abs(toMoney(amount))
+            billing_fee_descriptions.append(f'Billing fee {id}')
+            if fee_accounting_date is None:
+                fee_accounting_date = accounting_date
+                fee_value_date = value_date
+            # Skip adding to everhypeCSV - will be added as summary
+            continue
         
         # For refunds, payment_failure_refunds, payouts and stripe_fees, always use German descriptions
         if transType in ['refund', 'payment_failure_refund', 'payout', 'stripe_fee', 'application_fee']:
@@ -560,14 +574,27 @@ def main():
             description
         ])
 
-        # Fee processing
+        # Processing fee handling (from fee column)
         if line[4] != '0,00':
             fee_amount = toMoney(line[4])
             
             if SUM_FEES:
-                # Collect all fees for a summarized line
-                total_fees += fee_amount
-                fee_descriptions.append(f'Fees for payment {id}')
+                # Categorize fees by transaction type
+                if transType == 'charge':
+                    charge_fees += fee_amount
+                    charge_fee_descriptions.append(f'Processing fee for charge {id}')
+                elif transType == 'payment':
+                    payment_fees += fee_amount
+                    payment_fee_descriptions.append(f'Processing fee for payment {id}')
+                else:
+                    # Fallback for other types (refunds, etc.)
+                    if transType == 'charge':
+                        charge_fees += fee_amount
+                        charge_fee_descriptions.append(f'Fee for {transType} {id}')
+                    else:
+                        payment_fees += fee_amount
+                        payment_fee_descriptions.append(f'Fee for {transType} {id}')
+                
                 if fee_accounting_date is None:
                     fee_accounting_date = accounting_date
                     fee_value_date = value_date
@@ -577,25 +604,50 @@ def main():
                     id + '_fee',
                     'Kontoführungsgebühr',
                     source + '_fee',
-                    fee_amount * -1,
+                    round(fee_amount * -1, 2),
                     STRIPE_NAME,
                     accounting_date,
                     value_date,
                     f'Fees for payment {id} -- {description}'
                 ])
 
-    # If SUM_FEES is enabled and there are fees, add a summarized line
-    if SUM_FEES and total_fees > 0:
-        everhypeCSV.append([
-            'fees_total',
-            'Kontoführungsgebühr',
-            'fees_total',
-            total_fees * -1,
-            STRIPE_NAME,
-            fee_accounting_date,
-            fee_value_date,
-            f'Aggregated fees -- {"; ".join(fee_descriptions)}'
-        ])
+    # If SUM_FEES is enabled, add separate summarized lines for each fee type
+    if SUM_FEES:
+        if charge_fees > 0:
+            everhypeCSV.append([
+                'charge_fees_total',
+                'Kontoführungsgebühr',
+                'charge_fees_total',
+                round(charge_fees * -1, 2),
+                STRIPE_NAME,
+                fee_accounting_date,
+                fee_value_date,
+                'Stripe Processing Fees for Charges'
+            ])
+        
+        if payment_fees > 0:
+            everhypeCSV.append([
+                'payment_fees_total',
+                'Kontoführungsgebühr',
+                'payment_fees_total',
+                round(payment_fees * -1, 2),
+                STRIPE_NAME,
+                fee_accounting_date,
+                fee_value_date,
+                'Stripe Processing Fees for Payments'
+            ])
+        
+        if billing_usage_fees > 0:
+            everhypeCSV.append([
+                'billing_usage_fees_total',
+                'Kontoführungsgebühr',
+                'billing_usage_fees_total',
+                round(billing_usage_fees * -1, 2),
+                STRIPE_NAME,
+                fee_accounting_date,
+                fee_value_date,
+                'Billing Usage Fee'
+            ])
 
     # Writing to export file
     with open(export_filename, 'w', newline='', encoding='utf-8') as exportFile:
