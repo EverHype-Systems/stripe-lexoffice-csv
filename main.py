@@ -29,30 +29,148 @@ def get_client():
 def csv_header():
     """
     This method only returns the csv header for our export
+    Uses LexOffice-compatible German column headers for automatic field mapping
     :return: array
     """
     return [
-        'id',
-        'type',
-        'source',
-        'amount',
-        'customer',
-        'accounting_date',
-        'value_date',
-        'description',
+        'Buchungsdatum',  # Booking Date (accounting_date)
+        'Auftraggeber / Empfänger',  # Client/Payer / Recipient (customer)
+        'Verwendungszweck', # Purpose of Use/Description (description)
+        'Betrag',         # Amount (amount)
+        'Soll Betrag (Ausgabe)', # Debit Amount/Expense (negative amounts)
+        'Haben Betrag (Einnahme)', # Credit Amount/Income (positive amounts)
+        'Wertstellungsdatum', # Value Date (value_date)
     ]
 
 
 def getCustomerByPayment(payment_id: str):
     """
-    This method tries to fetch the Customer name from the payment
+    This method tries to fetch the Customer name from various Stripe objects
     if it does not succeed, it returns the stripe name (happens e.g. when there is a chargeback from a customer)
     :param payment_id: => source id in import.csv
     :return:
     """
     try:
-        return get_client().Charge.retrieve(payment_id)['billing_details']['name']
+        # Handle None or empty payment_id
+        if not payment_id:
+            return STRIPE_NAME
+            
+        client = get_client()
+        
+        # Handle different types of Stripe objects
+        if payment_id.startswith('ch_'):
+            # It's a charge
+            charge = client.Charge.retrieve(payment_id)
+            # Try billing_details first
+            if charge.get('billing_details', {}).get('name'):
+                return charge['billing_details']['name']
+            # Try customer object if available
+            if charge.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(charge['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            # Try payment intent if available
+            if charge.get('payment_intent'):
+                try:
+                    pi = client.PaymentIntent.retrieve(charge['payment_intent'])
+                    if pi.get('customer'):
+                        customer = client.Customer.retrieve(pi['customer'])
+                        return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            return STRIPE_NAME
+            
+        elif payment_id.startswith('pi_'):
+            # It's a payment intent
+            payment_intent = client.PaymentIntent.retrieve(payment_id)
+            # Try to get customer from the payment intent
+            if payment_intent.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(payment_intent['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            # Try to get the latest charge from this payment intent
+            if payment_intent.get('latest_charge'):
+                try:
+                    charge = client.Charge.retrieve(payment_intent['latest_charge'])
+                    if charge.get('billing_details', {}).get('name'):
+                        return charge['billing_details']['name']
+                except:
+                    pass
+            return STRIPE_NAME
+            
+        elif payment_id.startswith('py_'):
+            # Could be various payment-related objects, try different approaches
+            try:
+                # Try as PaymentMethod first
+                pm = client.PaymentMethod.retrieve(payment_id)
+                if pm.get('customer'):
+                    customer = client.Customer.retrieve(pm['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                return STRIPE_NAME
+            except:
+                # If PaymentMethod doesn't work, try other approaches
+                return STRIPE_NAME
+                
+        elif payment_id.startswith('cs_'):
+            # It's a checkout session
+            session = client.checkout.Session.retrieve(payment_id)
+            if session.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(session['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            # Try to get customer details from the session itself
+            customer_details = session.get('customer_details', {})
+            if customer_details.get('name'):
+                return customer_details['name']
+            if customer_details.get('email'):
+                return customer_details['email']
+            return STRIPE_NAME
+            
+        elif payment_id.startswith('in_'):
+            # It's an invoice
+            invoice = client.Invoice.retrieve(payment_id)
+            if invoice.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(invoice['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            return STRIPE_NAME
+            
+        elif payment_id.startswith('sub_'):
+            # It's a subscription
+            subscription = client.Subscription.retrieve(payment_id)
+            if subscription.get('customer'):
+                try:
+                    customer = client.Customer.retrieve(subscription['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                except:
+                    pass
+            return STRIPE_NAME
+            
+        else:
+            # For unknown types, try as charge first (legacy behavior)
+            try:
+                charge = client.Charge.retrieve(payment_id)
+                if charge.get('billing_details', {}).get('name'):
+                    return charge['billing_details']['name']
+                if charge.get('customer'):
+                    customer = client.Customer.retrieve(charge['customer'])
+                    return customer.get('name') or customer.get('email', STRIPE_NAME)
+                return STRIPE_NAME
+            except:
+                return STRIPE_NAME
+                
     except InvalidRequestError:
+        return STRIPE_NAME
+    except Exception as e:
+        print(f"Warning: Could not fetch customer for {payment_id}: {str(e)}")
         return STRIPE_NAME
 
 
@@ -563,15 +681,24 @@ def main():
             if not description or description.strip() == '':
                 description = createDefaultDescription(source, transType, toMoney(amount), customer, accounting_date, line[11])
 
+        # Determine if this is income (positive) or expense (negative)
+        amount_float = toMoney(amount)
+        soll_betrag = ""  # Debit amount (expense)
+        haben_betrag = ""  # Credit amount (income)
+        
+        if amount_float < 0:
+            soll_betrag = abs(amount_float)  # Expense (negative amount becomes positive in Soll)
+        else:
+            haben_betrag = amount_float  # Income (positive amount stays positive in Haben)
+        
         everhypeCSV.append([
-            id,
-            transType,
-            source,
-            toMoney(amount),
-            customer,
-            accounting_date,
-            value_date,
-            description
+            accounting_date,  # Buchungsdatum
+            customer,         # Auftraggeber / Empfänger
+            description,      # Verwendungszweck
+            amount_float,     # Betrag (original amount)
+            soll_betrag,      # Soll Betrag (Ausgabe)
+            haben_betrag,     # Haben Betrag (Einnahme)
+            value_date,       # Wertstellungsdatum
         ])
 
         # Processing fee handling (from fee column)
@@ -600,53 +727,51 @@ def main():
                     fee_value_date = value_date
             else:
                 # Create individual fee line (original behavior)
+                fee_description = f'Fees for payment {id} -- {description}'
+                
                 everhypeCSV.append([
-                    id + '_fee',
-                    'Kontoführungsgebühr',
-                    source + '_fee',
-                    round(fee_amount * -1, 2),
-                    STRIPE_NAME,
-                    accounting_date,
-                    value_date,
-                    f'Fees for payment {id} -- {description}'
+                    accounting_date,  # Buchungsdatum
+                    STRIPE_NAME,      # Auftraggeber / Empfänger
+                    fee_description,  # Verwendungszweck
+                    round(fee_amount * -1, 2),  # Betrag
+                    abs(fee_amount),  # Soll Betrag (Ausgabe) - fees are always expenses
+                    "",               # Haben Betrag (Einnahme)
+                    value_date,       # Wertstellungsdatum
                 ])
 
     # If SUM_FEES is enabled, add separate summarized lines for each fee type
     if SUM_FEES:
         if charge_fees > 0:
             everhypeCSV.append([
-                'charge_fees_total',
-                'Kontoführungsgebühr',
-                'charge_fees_total',
-                round(charge_fees * -1, 2),
-                STRIPE_NAME,
-                fee_accounting_date,
-                fee_value_date,
-                'Stripe Processing Fees for Charges'
+                fee_accounting_date,  # Buchungsdatum
+                STRIPE_NAME,          # Auftraggeber / Empfänger
+                'Stripe Processing Fees for Charges',  # Verwendungszweck
+                round(charge_fees * -1, 2),  # Betrag
+                charge_fees,          # Soll Betrag (Ausgabe) - fees are always expenses
+                "",                   # Haben Betrag (Einnahme)
+                fee_value_date,       # Wertstellungsdatum
             ])
         
         if payment_fees > 0:
             everhypeCSV.append([
-                'payment_fees_total',
-                'Kontoführungsgebühr',
-                'payment_fees_total',
-                round(payment_fees * -1, 2),
-                STRIPE_NAME,
-                fee_accounting_date,
-                fee_value_date,
-                'Stripe Processing Fees for Payments'
+                fee_accounting_date,  # Buchungsdatum
+                STRIPE_NAME,          # Auftraggeber / Empfänger
+                'Stripe Processing Fees for Payments',  # Verwendungszweck
+                round(payment_fees * -1, 2),  # Betrag
+                payment_fees,         # Soll Betrag (Ausgabe) - fees are always expenses
+                "",                   # Haben Betrag (Einnahme)
+                fee_value_date,       # Wertstellungsdatum
             ])
         
         if billing_usage_fees > 0:
             everhypeCSV.append([
-                'billing_usage_fees_total',
-                'Kontoführungsgebühr',
-                'billing_usage_fees_total',
-                round(billing_usage_fees * -1, 2),
-                STRIPE_NAME,
-                fee_accounting_date,
-                fee_value_date,
-                'Billing Usage Fee'
+                fee_accounting_date,  # Buchungsdatum
+                STRIPE_NAME,          # Auftraggeber / Empfänger
+                'Billing Usage Fee',  # Verwendungszweck
+                round(billing_usage_fees * -1, 2),  # Betrag
+                billing_usage_fees,   # Soll Betrag (Ausgabe) - fees are always expenses
+                "",                   # Haben Betrag (Einnahme)
+                fee_value_date,       # Wertstellungsdatum
             ])
 
     # Writing to export file
