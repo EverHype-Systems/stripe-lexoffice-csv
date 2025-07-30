@@ -56,6 +56,181 @@ def getCustomerByPayment(payment_id: str):
         return STRIPE_NAME
 
 
+def getPaymentMethodFromSource(source_id: str):
+    """
+    Fetches the payment method from the original Stripe object
+    :param source_id: The source ID (charge, payment_intent, etc.)
+    :return: Payment method string
+    """
+    try:
+        client = get_client()
+        
+        if source_id.startswith('ch_'):
+            # It's a charge
+            charge = client.Charge.retrieve(source_id)
+            payment_method = charge.get('payment_method_details', {})
+            if payment_method.get('card'):
+                brand = payment_method['card'].get('brand', 'Karte').capitalize()
+                last4 = payment_method['card'].get('last4', 'XXXX')
+                return f"{brand} ****{last4}"
+            elif payment_method.get('sepa_debit'):
+                last4 = payment_method['sepa_debit'].get('last4', 'XXXX')
+                return f"SEPA Lastschrift ****{last4}"
+            else:
+                return payment_method.get('type', 'Unbekannt').replace('_', ' ').title()
+        else:
+            return "Online Payment"
+    except Exception:
+        return "Unbekannt"
+
+
+def getProductInfoFromSource(source_id: str):
+    """
+    Fetches product information from the original Stripe object
+    :param source_id: The source ID (charge, payment_intent, etc.)
+    :return: Product name string or empty string
+    """
+    try:
+        client = get_client()
+        
+        if source_id.startswith('ch_'):
+            # It's a charge
+            charge = client.Charge.retrieve(source_id)
+            
+            # Try to get product from metadata first
+            metadata = charge.get('metadata', {})
+            if metadata.get('product_name'):
+                return metadata['product_name']
+            if metadata.get('product'):
+                return metadata['product']
+            if metadata.get('item_name'):
+                return metadata['item_name']
+            
+            # Try to get from payment intent
+            payment_intent_id = charge.get('payment_intent')
+            if payment_intent_id:
+                try:
+                    pi = client.PaymentIntent.retrieve(payment_intent_id)
+                    pi_metadata = pi.get('metadata', {})
+                    if pi_metadata.get('product_name'):
+                        return pi_metadata['product_name']
+                    if pi_metadata.get('product'):
+                        return pi_metadata['product']
+                    if pi_metadata.get('item_name'):
+                        return pi_metadata['item_name']
+                except:
+                    pass
+            
+            # Try to get from invoice if available
+            invoice_id = charge.get('invoice')
+            if invoice_id:
+                try:
+                    invoice = client.Invoice.retrieve(invoice_id)
+                    line_items = invoice.get('lines', {}).get('data', [])
+                    if line_items:
+                        # Get the first line item's description or price description
+                        first_item = line_items[0]
+                        if first_item.get('description'):
+                            return first_item['description']
+                        price = first_item.get('price', {})
+                        if price.get('nickname'):
+                            return price['nickname']
+                        product_data = price.get('product', {})
+                        if isinstance(product_data, dict) and product_data.get('name'):
+                            return product_data['name']
+                except:
+                    pass
+                    
+        elif source_id.startswith('py_'):
+            # Try as different object types - this might be from a checkout session
+            try:
+                # Try to find related checkout session through metadata patterns
+                # This is a bit tricky since py_ objects can be various things
+                pass
+            except:
+                pass
+                
+        return ""
+    except Exception as e:
+        print(f"Warning: Could not fetch product info for {source_id}: {str(e)}")
+        return ""
+
+
+def getDescriptionFromSource(source_id: str, transaction_type: str):
+    """
+    Fetches the real description from the original Stripe object
+    :param source_id: The source ID (charge, payment_intent, etc.)
+    :param transaction_type: The transaction type (payment, charge, etc.)
+    :return: Description string or empty string
+    """
+    try:
+        client = get_client()
+        
+        # Handle different source types
+        if source_id.startswith('ch_'):
+            # It's a charge
+            charge = client.Charge.retrieve(source_id)
+            description = charge.get('description', '') or charge.get('statement_descriptor', '') or ''
+            if description:
+                return description
+            # If charge has no description, try to get it from payment intent
+            payment_intent_id = charge.get('payment_intent')
+            if payment_intent_id:
+                pi = client.PaymentIntent.retrieve(payment_intent_id)
+                return pi.get('description', '') or pi.get('statement_descriptor', '') or ''
+            return ''
+        elif source_id.startswith('py_'):
+            # This seems to be a checkout session or setup intent, try different approaches
+            try:
+                # Try as PaymentMethod
+                pm = client.PaymentMethod.retrieve(source_id)
+                return pm.get('description', '') or ''
+            except:
+                try:
+                    # Try as Setup Intent
+                    si = client.SetupIntent.retrieve(source_id)
+                    return si.get('description', '') or si.get('statement_descriptor', '') or ''
+                except:
+                    return ''
+        elif source_id.startswith('pi_'):
+            # It's a payment intent
+            payment_intent = client.PaymentIntent.retrieve(source_id)
+            return payment_intent.get('description', '') or payment_intent.get('statement_descriptor', '') or ''
+        elif source_id.startswith('re_'):
+            # It's a refund
+            refund = client.Refund.retrieve(source_id)
+            return refund.get('reason', '') or 'Refund'
+        elif source_id.startswith('cs_'):
+            # It's a checkout session
+            session = client.checkout.Session.retrieve(source_id)
+            return session.get('description', '') or session.get('client_reference_id', '') or ''
+        else:
+            # For unknown types, try to create a meaningful description from transaction type
+            if transaction_type == 'payment':
+                return 'Online Payment'
+            elif transaction_type == 'charge':
+                return 'Card Payment'
+            elif transaction_type == 'refund':
+                return 'Refund'
+            elif transaction_type == 'payout':
+                return 'Payout to Bank'
+            else:
+                return transaction_type.replace('_', ' ').title()
+    except Exception as e:
+        # If we can't retrieve the object, create a fallback description
+        print(f"Warning: Could not fetch description for {source_id}: {str(e)}")
+        if transaction_type == 'payment':
+            return 'Online Payment'
+        elif transaction_type == 'charge':
+            return 'Card Payment'
+        elif transaction_type == 'refund':
+            return 'Refund'
+        elif transaction_type == 'payout':
+            return 'Payout to Bank'
+        else:
+            return transaction_type.replace('_', ' ').title()
+
+
 def read_csv():
     """
     This method returns all csv lines in import.csv & drops the header.
@@ -187,6 +362,105 @@ def toMoney(am: str):
     )
 
 
+def getRefundReason(source_id: str, transaction_type: str):
+    """
+    Gets the refund reason from Stripe
+    :param source_id: The source ID
+    :param transaction_type: Transaction type
+    :return: Refund reason in German
+    """
+    try:
+        client = get_client()
+        
+        if source_id.startswith('re_'):
+            # It's a refund
+            refund = client.Refund.retrieve(source_id)
+            reason = refund.get('reason', '')
+            if reason == 'duplicate':
+                return 'Doppelte Zahlung'
+            elif reason == 'fraudulent':
+                return 'Verdacht auf Betrug'
+            elif reason == 'requested_by_customer':
+                return 'Kunde hat Rückerstattung angefordert'
+            elif reason:
+                return reason
+            else:
+                return 'Rückerstattung'
+        elif transaction_type == 'payment_failure_refund':
+            return 'Rückerstattung aufgrund fehlgeschlagener Zahlung'
+        else:
+            return 'Rückerstattung'
+    except Exception:
+        return 'Rückerstattung'
+
+
+def createDefaultDescription(source_id: str, transaction_type: str, amount: float, customer_name: str, accounting_date: str, original_description: str = ""):
+    """
+    Creates a default description when none is available
+    :param source_id: The source ID
+    :param transaction_type: Transaction type
+    :param amount: Transaction amount
+    :param customer_name: Customer name
+    :param accounting_date: Transaction date
+    :param original_description: Original description from Stripe
+    :return: Formatted description string
+    """
+    try:
+        # Parse and format date from "YYYY-MM-DD HH:MM:SS" to "DD.MM.YYYY"
+        from datetime import datetime
+        date_obj = datetime.strptime(accounting_date.split(' ')[0], '%Y-%m-%d')
+        formatted_date = date_obj.strftime('%d.%m.%Y')
+        
+        # Format amount with German decimal separator (make amount positive for display)
+        amount_abs = abs(amount)
+        amount_str = f"{amount_abs:.2f}".replace('.', ',')
+        
+        # Handle different transaction types
+        if transaction_type == 'refund':
+            refund_reason = getRefundReason(source_id, transaction_type)
+            description = f"Rückerstattung vom {formatted_date} über {amount_str}€, Kunde: {customer_name}, Grund: {refund_reason}"
+        elif transaction_type == 'payment_failure_refund':
+            description = f"Rückerstattung vom {formatted_date} über {amount_str}€, Kunde: {customer_name}, Grund: Fehlgeschlagene Zahlung"
+        elif transaction_type == 'payout':
+            description = f"Geldtransit vom {formatted_date} über {amount_str}€ - Auszahlung von gesammelten Transaktionen"
+        elif transaction_type in ['stripe_fee', 'application_fee']:
+            # Create description based on what the fee is for
+            fee_reason = ""
+            if "tax" in original_description.lower() or "automatic" in original_description.lower():
+                fee_reason = " - Automated Tax Berechnung"
+            elif "connect" in original_description.lower():
+                fee_reason = " - Connect Gebühr"
+            elif "processing" in original_description.lower():
+                fee_reason = " - Zahlungsabwicklung"
+            elif original_description and original_description.strip():
+                fee_reason = f" - {original_description}"
+            
+            description = f"Kontoführungsgebühr vom {formatted_date} über {amount_str}€{fee_reason}"
+        else:
+            # Regular payment/charge
+            payment_method = getPaymentMethodFromSource(source_id)
+            description = f"Zahlung vom {formatted_date} über {amount_str}€ ({payment_method}), Kunde: {customer_name}"
+            
+            # Try to get product information for payments/charges
+            product_name = getProductInfoFromSource(source_id)
+            if product_name and product_name.strip():
+                description += f", Kunde hat Produkt \"{product_name}\" gekauft"
+        
+        return description
+    except Exception as e:
+        # Fallback if anything goes wrong
+        if transaction_type == 'refund':
+            return f"Rückerstattung über {abs(amount):.2f}€, Kunde: {customer_name}"
+        elif transaction_type == 'payment_failure_refund':
+            return f"Rückerstattung über {abs(amount):.2f}€, Kunde: {customer_name}, Grund: Fehlgeschlagene Zahlung"
+        elif transaction_type == 'payout':
+            return f"Geldtransit über {abs(amount):.2f}€ - Auszahlung von gesammelten Transaktionen"
+        elif transaction_type in ['stripe_fee', 'application_fee']:
+            return f"Kontoführungsgebühr über {abs(amount):.2f}€"
+        else:
+            return f"Zahlung über {amount:.2f}€, Kunde: {customer_name}"
+
+
 def main():
     """
     Main function with CLI argument parsing
@@ -239,8 +513,20 @@ def main():
         accounting_date = line[9]
         # --> available_on (utc)
         value_date = line[10]
-        # --> description
+        # --> description from original source or balance transaction
         description = line[11]
+        
+        # For refunds, payment_failure_refunds, payouts and stripe_fees, always use German descriptions
+        if transType in ['refund', 'payment_failure_refund', 'payout', 'stripe_fee', 'application_fee']:
+            description = createDefaultDescription(source, transType, toMoney(amount), customer, accounting_date, line[11])
+        else:
+            # If description is empty, try to get it from the original source
+            if not description or description.strip() == '':
+                description = getDescriptionFromSource(source, transType)
+            
+            # If still empty, create a default description
+            if not description or description.strip() == '':
+                description = createDefaultDescription(source, transType, toMoney(amount), customer, accounting_date, line[11])
 
         everhypeCSV.append([
             id,
