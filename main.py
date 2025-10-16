@@ -1,6 +1,9 @@
 import csv
 import stripe
-from stripe.error import InvalidRequestError
+try:
+    from stripe.error import InvalidRequestError
+except ModuleNotFoundError:  # Stripe v11+
+    from stripe._error import InvalidRequestError
 import os
 from dotenv import load_dotenv
 import argparse
