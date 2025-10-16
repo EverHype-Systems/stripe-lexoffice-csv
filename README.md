@@ -64,6 +64,12 @@ STRIPE_NAME=Ihr Unternehmensname
 # true = Alle Gebühren in einer Zeile zusammenfassen
 SUM_FEES=false
 
+# Rechnungsnummern aus Stripe übernehmen
+# false = Spalte bleibt leer (Standard)
+# true = Rechnungsnummern werden mit optionalem Präfix exportiert
+INCLUDE_INVOICE_NUMBER=false
+INVOICE_NUMBER_PREFIX=
+
 # Datenquellen-Methode
 # CSV = Liest aus import.csv (Standard)
 # API = Holt Daten direkt von Stripe API
@@ -106,6 +112,13 @@ python main.py --start-date 2024-01-01 --end-date 2024-01-31
 python main.py --start-date 2024-01-15 --end-date 2024-01-21
 ```
 
+### Rechnungsnummern in LexOffice
+
+- Aktivieren Sie `INCLUDE_INVOICE_NUMBER=true`, um eine zusätzliche Spalte `Rechnungsnummer` in der Exportdatei zu befüllen
+- Optional können Sie mit `INVOICE_NUMBER_PREFIX` ein eindeutiges Präfix (z. B. `STR-`) voranstellen
+- LexOffice nutzt die Spalte `Rechnungsnummer`, um eingehende Zahlungen automatisch mit vorhandenen Rechnungen abzugleichen
+- Für Transaktionen ohne zugeordnete Stripe-Rechnung bleibt die Spalte leer, sodass der Import weiterhin fehlerfrei funktioniert
+
 ## ⚙️ Konfigurationsoptionen
 
 ### STRIPE_METHOD
@@ -117,6 +130,13 @@ python main.py --start-date 2024-01-15 --end-date 2024-01-21
 
 - **`false`**: Erstellt für jede Transaktion eine separate Gebührenzeile
 - **`true`**: Fasst alle Gebühren in einer einzigen Zeile zusammen
+
+### INCLUDE_INVOICE_NUMBER & INVOICE_NUMBER_PREFIX
+
+- **`INCLUDE_INVOICE_NUMBER=false`**: Die Spalte `Rechnungsnummer` bleibt leer
+- **`INCLUDE_INVOICE_NUMBER=true`**: Das Skript versucht, zugehörige Stripe-Rechnungsnummern zu laden (über Charges, Payment Intents oder direkte Rechnungs-IDs) und schreibt sie in die Spalte `Rechnungsnummer`
+- **`INVOICE_NUMBER_PREFIX`**: Optionaler Präfix, der vor jede gefundene Rechnungsnummer gesetzt wird (z. B. `STR-`)
+- **LexOffice-Mapping**: LexOffice erkennt die Spalte `Rechnungsnummer` automatisch und verknüpft Zahlungen mit vorhandenen Rechnungen
 
 ### Beispiel-Ausgaben
 

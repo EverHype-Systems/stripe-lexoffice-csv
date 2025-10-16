@@ -18,6 +18,8 @@ STRIPE_KEY = os.getenv('STRIPE_KEY', '')
 STRIPE_NAME = os.getenv('STRIPE_NAME', 'Stripe Technology Europe, Limited')
 SUM_FEES = os.getenv('SUM_FEES', 'false').lower() == 'true'
 STRIPE_METHOD = os.getenv('STRIPE_METHOD', 'CSV').upper()
+INCLUDE_INVOICE_NUMBER = os.getenv('INCLUDE_INVOICE_NUMBER', 'false').lower() == 'true'
+INVOICE_NUMBER_PREFIX = os.getenv('INVOICE_NUMBER_PREFIX', '')
 
 
 def get_client():
@@ -43,6 +45,7 @@ def csv_header():
         'Soll Betrag (Ausgabe)', # Debit Amount/Expense (negative amounts)
         'Haben Betrag (Einnahme)', # Credit Amount/Income (positive amounts)
         'Wertstellungsdatum', # Value Date (value_date)
+        'Rechnungsnummer',  # Invoice number (optional)
     ]
 
 
@@ -175,6 +178,104 @@ def getCustomerByPayment(payment_id: str):
     except Exception as e:
         print(f"Warning: Could not fetch customer for {payment_id}: {str(e)}")
         return STRIPE_NAME
+
+
+def _get_invoice_number(client, invoice_id: str) -> str:
+    try:
+        invoice = client.Invoice.retrieve(invoice_id)
+        if not invoice:
+            return ""
+        return invoice.get('number') or invoice.get('invoice_number') or ''
+    except InvalidRequestError:
+        return ""
+    except Exception as e:
+        print(f"Warning: Could not fetch invoice {invoice_id}: {str(e)}")
+        return ""
+
+
+def _get_invoice_number_from_payment_intent(client, payment_intent_id: str) -> str:
+    try:
+        payment_intent = client.PaymentIntent.retrieve(payment_intent_id)
+    except InvalidRequestError:
+        return ""
+    except Exception as e:
+        print(f"Warning: Could not fetch payment intent {payment_intent_id}: {str(e)}")
+        return ""
+
+    if not payment_intent:
+        return ""
+
+    invoice_id = payment_intent.get('invoice')
+    if invoice_id:
+        invoice_number = _get_invoice_number(client, invoice_id)
+        if invoice_number:
+            return invoice_number
+
+    charges = payment_intent.get('charges', {}).get('data', [])
+    for charge in charges:
+        invoice_id = charge.get('invoice')
+        if invoice_id:
+            invoice_number = _get_invoice_number(client, invoice_id)
+            if invoice_number:
+                return invoice_number
+
+    latest_charge = payment_intent.get('latest_charge')
+    if latest_charge:
+        invoice_number = _get_invoice_number_from_charge(client, latest_charge, allow_payment_intent_lookup=False)
+        if invoice_number:
+            return invoice_number
+
+    return ""
+
+
+def _get_invoice_number_from_charge(client, charge_id: str, *, allow_payment_intent_lookup: bool = True) -> str:
+    try:
+        charge = client.Charge.retrieve(charge_id)
+    except InvalidRequestError:
+        return ""
+    except Exception as e:
+        print(f"Warning: Could not fetch charge {charge_id}: {str(e)}")
+        return ""
+
+    if not charge:
+        return ""
+
+    invoice_id = charge.get('invoice')
+    if invoice_id:
+        invoice_number = _get_invoice_number(client, invoice_id)
+        if invoice_number:
+            return invoice_number
+
+    payment_intent_id = charge.get('payment_intent')
+    if allow_payment_intent_lookup and payment_intent_id:
+        return _get_invoice_number_from_payment_intent(client, payment_intent_id)
+
+    return ""
+
+
+def getInvoiceNumberFromSource(source_id: str) -> str:
+    """Resolve an invoice number from a Stripe balance transaction source."""
+    if not source_id:
+        return ""
+
+    try:
+        client = get_client()
+
+        if source_id.startswith('in_'):
+            return _get_invoice_number(client, source_id)
+
+        if source_id.startswith('ch_'):
+            return _get_invoice_number_from_charge(client, source_id)
+
+        if source_id.startswith('pi_'):
+            return _get_invoice_number_from_payment_intent(client, source_id)
+
+        return ""
+    except InvalidRequestError:
+        return ""
+    except Exception as e:
+        print(f"Warning: Could not fetch invoice number for {source_id}: {str(e)}")
+        return ""
 
 
 def getPaymentMethodFromSource(source_id: str):
@@ -630,6 +731,7 @@ def main():
     print(f"Configuration:")
     print(f"  STRIPE_METHOD: {STRIPE_METHOD}")
     print(f"  SUM_FEES: {SUM_FEES}")
+    print(f"  INCLUDE_INVOICE_NUMBER: {INCLUDE_INVOICE_NUMBER}")
     print(f"  Export filename: {export_filename}")
     if start_date and end_date:
         print(f"  Time range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
@@ -688,12 +790,18 @@ def main():
         amount_float = toMoney(amount)
         soll_betrag = ""  # Debit amount (expense)
         haben_betrag = ""  # Credit amount (income)
-        
+
         if amount_float < 0:
             soll_betrag = abs(amount_float)  # Expense (negative amount becomes positive in Soll)
         else:
             haben_betrag = amount_float  # Income (positive amount stays positive in Haben)
-        
+
+        invoice_number = ""
+        if INCLUDE_INVOICE_NUMBER:
+            resolved_invoice = getInvoiceNumberFromSource(source)
+            if resolved_invoice:
+                invoice_number = f"{INVOICE_NUMBER_PREFIX}{resolved_invoice}"
+
         everhypeCSV.append([
             accounting_date,  # Buchungsdatum
             customer,         # Auftraggeber / Empfänger
@@ -702,6 +810,7 @@ def main():
             soll_betrag,      # Soll Betrag (Ausgabe)
             haben_betrag,     # Haben Betrag (Einnahme)
             value_date,       # Wertstellungsdatum
+            invoice_number,   # Rechnungsnummer
         ])
 
         # Processing fee handling (from fee column)
@@ -740,6 +849,7 @@ def main():
                     abs(fee_amount),  # Soll Betrag (Ausgabe) - fees are always expenses
                     "",               # Haben Betrag (Einnahme)
                     value_date,       # Wertstellungsdatum
+                    "",               # Rechnungsnummer
                 ])
 
     # If SUM_FEES is enabled, add separate summarized lines for each fee type
@@ -753,6 +863,7 @@ def main():
                 charge_fees,          # Soll Betrag (Ausgabe) - fees are always expenses
                 "",                   # Haben Betrag (Einnahme)
                 fee_value_date,       # Wertstellungsdatum
+                "",                   # Rechnungsnummer
             ])
         
         if payment_fees > 0:
@@ -764,6 +875,7 @@ def main():
                 payment_fees,         # Soll Betrag (Ausgabe) - fees are always expenses
                 "",                   # Haben Betrag (Einnahme)
                 fee_value_date,       # Wertstellungsdatum
+                "",                   # Rechnungsnummer
             ])
         
         if billing_usage_fees > 0:
@@ -775,6 +887,7 @@ def main():
                 billing_usage_fees,   # Soll Betrag (Ausgabe) - fees are always expenses
                 "",                   # Haben Betrag (Einnahme)
                 fee_value_date,       # Wertstellungsdatum
+                "",                   # Rechnungsnummer
             ])
 
     # Writing to export file
